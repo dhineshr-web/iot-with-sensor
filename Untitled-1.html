@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ESP32 IoT Dashboard</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 0; padding: 0;
+      background-image: url("IoT-world.jpg");  /* optional */
+      background-size: cover;
+      background-position: center;
+    }
+    .wrap { backdrop-filter: blur(2px); padding: 24px; }
+    .status { margin: 10px 0 20px; font-weight: bold; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      max-width: 1000px; margin: 0 auto;
+    }
+    .card {
+      background: rgba(255,255,255,0.92);
+      border-radius: 12px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+      padding: 18px;
+    }
+    h2 { margin: 0 0 10px; }
+    .val { font-size: 28px; color: #0b66ff; }
+    .row { margin-top: 10px; }
+    button {
+      padding: 10px 16px; border: 0; border-radius: 8px; cursor: pointer;
+      margin: 6px; font-weight: 600;
+    }
+    .open { background: #22c55e; color: white; }
+    .close { background: #ef4444; color: white; }
+    input[type="range"] { width: 100%; }
+    small { color: #666; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>ESP32 IoT Dashboard</h1>
+    <div id="conn" class="status">Connecting…</div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>LDR</h2>
+        <div class="val" id="ldr">--</div>
+        <small id="ldrLabel">—</small>
+      </div>
+
+      <div class="card">
+        <h2>IR Sensor</h2>
+        <div class="val" id="ir">--</div>
+        <small>(1 = HIGH, 0 = LOW)</small>
+      </div>
+
+      <div class="card">
+        <h2>Ultrasonic Distance</h2>
+        <div class="val" id="dist">--</div>
+        <small>cm</small>
+      </div>
+
+      <div class="card">
+        <h2>Servo Motor</h2>
+        <div class="row">
+          <button class="open"  onclick="sendServo('open')">Open</button>
+          <button class="close" onclick="sendServo('close')">Close</button>
+        </div>
+        <div class="row">
+          <input id="angle" type="range" min="0" max="180" step="1" value="0" oninput="sendAngle(this.value)">
+          <div><small>Angle: <span id="aVal">0</span>°</small></div>
+        </div>
+        <div class="row">
+          <small id="ack">—</small>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // -------- HiveMQ WebSocket URL + creds (your cluster) ----------
+    const connectUrl = "wss://47c32f0a0bef4745ba3e3fb896bc5056.s1.eu.hivemq.cloud:8884/mqtt";
+    const options = {
+      username: "hivemq.webclient.1755667754607",
+      password: "317HfxDb>M8:AF&Q<jls",
+      clean: true,
+      connectTimeout: 8000,
+      reconnectPeriod: 2000,
+      clientId: "web-" + Math.random().toString(16).slice(2, 10),
+      protocolVersion: 4
+    };
+
+    const client = mqtt.connect(connectUrl, options);
+
+    // UI helpers
+    const $ = (id) => document.getElementById(id);
+    const dayThreshold = 2000; // tweak for your LDR
+
+    client.on("connect", () => {
+      $("conn").textContent = "Connected ✅";
+      // subscribe to the exact topics your ESP32 publishes
+      client.subscribe("esp32/ldr");
+      client.subscribe("esp32/ir");
+      client.subscribe("esp32/distance");
+      client.subscribe("esp32/servo/ack"); // optional ack
+    });
+
+    client.on("reconnect", () => $("conn").textContent = "Reconnecting…");
+    client.on("close",     () => $("conn").textContent = "Disconnected ❌");
+    client.on("error", (e) => { console.error(e); $("conn").textContent = "Error ❌"; });
+
+    client.on("message", (topic, payload) => {
+      const msg = payload.toString();
+      if (topic === "esp32/ldr") {
+        $("ldr").textContent = msg;
+        const v = parseInt(msg, 10);
+        $("ldrLabel").textContent = isNaN(v) ? "—" : (v > dayThreshold ? "Day" : "Night");
+      }
+      if (topic === "esp32/ir") {
+        $("ir").textContent = msg === "1" ? "1 (HIGH)" : "0 (LOW)";
+      }
+      if (topic === "esp32/distance") {
+        $("dist").textContent = msg === "NA" ? "—" : msg;
+      }
+      if (topic === "esp32/servo/ack") {
+        $("ack").textContent = "Servo: " + msg;
+      }
+    });
+
+    // ---- Servo controls ----
+    function sendServo(cmd) {
+      client.publish("esp32/servo", String(cmd));
+    }
+
+    // slider -> send angle and show value
+    let angleTimer;
+    function sendAngle(v) {
+      $("aVal").textContent = v;
+      // debounce a little (avoid flooding)
+      if (angleTimer) clearTimeout(angleTimer);
+      angleTimer = setTimeout(() => {
+        client.publish("esp32/servo", String(v)); // ESP32 accepts raw angle too
+      }, 120);
+    }
+  </script>
+</body>
+</html>
